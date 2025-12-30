@@ -17,7 +17,7 @@ fn test_full_pipeline_v0_2_0() {
         "{}",
         r#"
 //! @openapi-fragment CommonError(code)
-//! description: Error {{arg0}}
+//! description: Error {{code}}
 //! content:
 //!   application/json:
 //!     schema:

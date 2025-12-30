@@ -10,7 +10,11 @@ pub enum ExtractedItem {
         content: String,
     },
     /// @openapi-fragment Name(args...)
-    Fragment { name: String, content: String },
+    Fragment {
+        name: String,
+        params: Vec<String>,
+        content: String,
+    },
     /// @openapi<T, U>
     Blueprint {
         name: String,
@@ -121,11 +125,27 @@ impl OpenApiVisitor {
                 let rest = header.strip_prefix("@openapi-fragment").unwrap().trim();
                 // Simple parse: take until first space or paren?
                 // Name(args)
-                let name = rest.split('(').next().unwrap_or(rest).trim().to_string();
-                self.items.push(ExtractedItem::Fragment {
-                    name,
-                    content: body,
-                });
+                if let Some(idx) = rest.find('(') {
+                    let name = rest[..idx].trim().to_string();
+                    let params_str = rest[idx + 1..].trim_end_matches(')');
+                    let params: Vec<String> = params_str
+                        .split(',')
+                        .map(|p| p.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                        .collect();
+
+                    self.items.push(ExtractedItem::Fragment {
+                        name,
+                        params,
+                        content: body,
+                    });
+                } else {
+                    self.items.push(ExtractedItem::Fragment {
+                        name: rest.to_string(),
+                        params: Vec::new(),
+                        content: body,
+                    });
+                }
             } else if header.starts_with("@openapi<") {
                 // Blueprint
                 // Header format: @openapi<T, U>

@@ -117,8 +117,12 @@ pub fn scan_directories(roots: &[PathBuf], includes: &[PathBuf]) -> Result<Vec<S
                                 // Schemas are ALSO snippets that need processing output
                                 operation_snippets.push(content);
                             }
-                            ExtractedItem::Fragment { name, content } => {
-                                registry.insert_fragment(name, content);
+                            ExtractedItem::Fragment {
+                                name,
+                                params,
+                                content,
+                            } => {
+                                registry.insert_fragment(name, params, content);
                             }
                             ExtractedItem::Blueprint {
                                 name,

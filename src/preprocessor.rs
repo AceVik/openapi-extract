@@ -27,12 +27,14 @@ pub fn preprocess(content: &str, registry: &Registry) -> String {
             .collect()
     }
 
-    // Helper to substitute placeholders {{arg0}}, {{arg1}} in fragment
-    fn substitute_fragment_args(fragment: &str, args: &[String]) -> String {
+    // Helper to substitute named args {{param}} in fragment
+    fn substitute_fragment_args(fragment: &str, params: &[String], args: &[String]) -> String {
         let mut result = fragment.to_string();
-        for (i, arg) in args.iter().enumerate() {
-            let placeholder = format!("{{{{arg{}}}}}", i); // {{arg0}}
-            result = result.replace(&placeholder, arg);
+        for (i, param) in params.iter().enumerate() {
+            if let Some(arg) = args.get(i) {
+                let placeholder = format!("{{{{{}}}}}", param); // {{param}}
+                result = result.replace(&placeholder, arg);
+            }
         }
         result
     }
@@ -44,14 +46,16 @@ pub fn preprocess(content: &str, registry: &Registry) -> String {
             let args = parse_args(args_str);
 
             if let Some(fragment) = registry.fragments.get(name) {
-                let expanded = substitute_fragment_args(fragment, &args);
+                let expanded = substitute_fragment_args(&fragment.body, &fragment.params, &args);
                 // Maintain indentation
                 let indent = line
                     .chars()
                     .take_while(|c| c.is_whitespace())
                     .collect::<String>();
-                for frag_line in expanded.lines() {
-                    new_lines.push(format!("{}{}", indent, frag_line));
+                if !expanded.trim().is_empty() {
+                    for frag_line in expanded.lines() {
+                        new_lines.push(format!("{}{}", indent, frag_line));
+                    }
                 }
             } else {
                 log::warn!("Fragment '{}' not found for @insert", name);
@@ -63,13 +67,23 @@ pub fn preprocess(content: &str, registry: &Registry) -> String {
             let args = parse_args(args_str);
 
             if let Some(fragment) = registry.fragments.get(name) {
-                let expanded_text = substitute_fragment_args(fragment, &args);
+                let expanded_text =
+                    substitute_fragment_args(&fragment.body, &fragment.params, &args);
                 let indent = line
                     .chars()
                     .take_while(|c| c.is_whitespace())
                     .collect::<String>();
-                for frag_line in expanded_text.lines() {
-                    new_lines.push(format!("{}{}", indent, frag_line));
+
+                // Smart Merge Logic (Regex Fallback)
+                // If fragment has keys that look like they belong to a parent structure,
+                // we just inject them.
+                // But if we encounter duplicate keys...
+
+                // For now, implementing simple injection but guarding against empty lines.
+                if !expanded_text.trim().is_empty() {
+                    for frag_line in expanded_text.lines() {
+                        new_lines.push(format!("{}{}", indent, frag_line));
+                    }
                 }
             } else {
                 log::warn!("Fragment '{}' not found for @extend", name);
@@ -92,6 +106,7 @@ mod tests {
         let mut registry = Registry::new();
         registry.insert_fragment(
             "Headers".to_string(),
+            vec![],
             "header: x-val\nother: y-val".to_string(),
         );
 
@@ -105,7 +120,11 @@ mod tests {
     #[test]
     fn test_fragment_with_args() {
         let mut registry = Registry::new();
-        registry.insert_fragment("Field".to_string(), "name: {{arg0}}".to_string());
+        registry.insert_fragment(
+            "Field".to_string(),
+            vec!["name".to_string()],
+            "name: {{name}}".to_string(),
+        );
 
         let input = "@insert Field(\"my-name\")";
         let output = preprocess(input, &registry);
