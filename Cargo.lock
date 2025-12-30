@@ -294,6 +294,7 @@ dependencies = [
  "colored",
  "env_logger",
  "log",
+ "proc-macro2",
  "regex",
  "serde",
  "serde_json",

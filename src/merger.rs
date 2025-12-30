@@ -1,24 +1,27 @@
 use crate::error::{Error, Result};
+use crate::scanner::Snippet;
 use serde_yaml::Value;
 
 /// Merges multiple OpenAPI YAML/JSON fragments into a single Value.
-///
-/// Logic:
-/// 1. Parse all fragments.
-/// 2. Identify strictly one "Root" (contains `openapi` and `info`).
-/// 3. Deep merge all other fragments into the Root.
-pub fn merge_openapi(fragments: Vec<String>) -> Result<Value> {
+pub fn merge_openapi(snippets: Vec<Snippet>) -> Result<Value> {
     let mut root: Option<Value> = None;
     let mut others: Vec<Value> = Vec::new();
 
-    for (i, fragment) in fragments.iter().enumerate() {
-        let value: Value = match serde_yaml::from_str(fragment) {
+    for (_i, snippet) in snippets.iter().enumerate() {
+        let value: Value = match serde_yaml::from_str(&snippet.content) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("\nERROR: Failed to parse snippet #{}:", i + 1);
-                eprintln!("---------------------------------------------------");
-                eprintln!("{}", fragment);
-                eprintln!("---------------------------------------------------");
+                // Enhanced Error Reporting
+                eprintln!("\n\x1b[31;1mERROR: YAML parsing failed\x1b[0m");
+                eprintln!("  --> {}:{}", snippet.file_path.display(), snippet.line_number);
+                eprintln!("  |");
+                eprintln!("  = Reason: {}", e);
+                eprintln!("  |");
+                eprintln!("  = Snippet Context (first 5 lines):");
+                for (idx, line) in snippet.content.lines().take(5).enumerate() {
+                     eprintln!("    {:02} | {}", idx + snippet.line_number, line);
+                }
+                eprintln!();
                 return Err(Error::Yaml(e));
             }
         };
@@ -99,7 +102,18 @@ mod tests {
               description: fragment
         "#;
 
-        let result = merge_openapi(vec![root.to_string(), fragment.to_string()]).unwrap();
+        let root_snippet = Snippet {
+            content: root.to_string(),
+            file_path: std::path::PathBuf::from("root.yaml"),
+            line_number: 1,
+        };
+        let frag_snippet = Snippet {
+            content: fragment.to_string(),
+            file_path: std::path::PathBuf::from("frag.yaml"),
+            line_number: 1,
+        };
+
+        let result = merge_openapi(vec![root_snippet, frag_snippet]).unwrap();
 
         // Helper to check fields
         let yaml_out = serde_yaml::to_string(&result).unwrap();
@@ -110,7 +124,12 @@ mod tests {
     #[test]
     fn test_no_root() {
         let fragment = "paths: {}";
-        let res = merge_openapi(vec![fragment.to_string()]);
+        let snip = Snippet {
+            content: fragment.to_string(),
+            file_path: std::path::PathBuf::from("frag.yaml"),
+            line_number: 1,
+        };
+        let res = merge_openapi(vec![snip]);
         assert!(matches!(res, Err(Error::NoRootFound)));
     }
 
@@ -118,7 +137,10 @@ mod tests {
     fn test_multiple_roots() {
         let root1 = "openapi: 3.0\ninfo: {title: A}";
         let root2 = "openapi: 3.0\ninfo: {title: B}";
-        let res = merge_openapi(vec![root1.to_string(), root2.to_string()]);
+        let s1 = Snippet { content: root1.to_string(), file_path: std::path::PathBuf::from("r1.yaml"), line_number: 1 };
+        let s2 = Snippet { content: root2.to_string(), file_path: std::path::PathBuf::from("r2.yaml"), line_number: 1 };
+        
+        let res = merge_openapi(vec![s1, s2]);
         assert!(matches!(res, Err(Error::MultipleRootsFound)));
     }
 }

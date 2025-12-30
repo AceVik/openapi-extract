@@ -12,6 +12,7 @@ A production-grade OpenAPI generator for Rust. Extracts, merges, and auto-wraps 
   - `@extend Secured("admin")` → `x-openapi-extend` (auto-quoted).
   - `@insert Pagination` → Injects parameter references.
 - **Mixed Inputs**: Merges `.rs`, `.yaml`, and `.json`.
+- **Source-Mapped Errors**: 🚨 Report precise file and line numbers on YAML errors.
 
 ## Installation
 
