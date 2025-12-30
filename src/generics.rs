@@ -90,7 +90,12 @@ impl<'a> Monomorphizer<'a> {
             .collect();
 
         // 3. Generate Concrete Name
-        let concrete_name = format!("{}_{}", name, resolved_args.join("_"));
+        let suffix = if resolved_args.is_empty() {
+            "Generic".to_string()
+        } else {
+            resolved_args.join("_")
+        };
+        let concrete_name = format!("{}_{}", name, suffix);
 
         if self.registry.concrete_schemas.contains_key(&concrete_name) {
             return concrete_name;

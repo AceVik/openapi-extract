@@ -141,4 +141,9 @@ fn main() {{}}
     assert!(merged.contains("description: Not Found"));
     assert!(merged.contains("'200':"));
     assert!(merged.contains("description: OK override"));
+
+    // 6. Regression Check: Null Parameters
+    // Ensure we don't generate "parameters: [null]" or similar artifacts
+    assert!(!merged.contains("[null]"));
+    assert!(!merged.contains("null"));
 }
