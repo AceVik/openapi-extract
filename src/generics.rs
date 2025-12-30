@@ -72,7 +72,7 @@ impl<'a> Monomorphizer<'a> {
 
     /// Creates a concrete schema from a blueprint and args.
     /// e.g. Name="Page", Args="User" -> "Page_User"
-    fn monomorphize(&mut self, name: &str, args_str: &str) -> String {
+    pub fn monomorphize(&mut self, name: &str, args_str: &str) -> String {
         // 1. Recursive resolve args (handle nested $Result<Page<User>>)
         let args = self.split_args(args_str);
 

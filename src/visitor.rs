@@ -172,10 +172,51 @@ impl OpenApiVisitor {
                 }
             } else if (header.starts_with("@openapi") && !header.contains('<')) || header == "@json"
             {
-                // Standard schema
+                // Auto-Wrap Heuristic
+                // body has the content, already cleaned/merged.
+                let content = &body;
+
+                // Auto-Wrap Heuristic
+                // If content does NOT start with top-level keys, wrap it.
+                // Keys: openapi, info, paths, components, tags, servers, security
+                // Simple check by tokenizing or simple textual check.
+                // We assume clean YAML structure.
+                let starts_with_toplevel = content.lines().any(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("#") {
+                        return false;
+                    } // skip comments
+                    if let Some(key) = trimmed.split(':').next() {
+                        match key.trim() {
+                            "openapi" | "info" | "paths" | "components" | "tags" | "servers"
+                            | "security" => true,
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                });
+
+                let final_content = if !starts_with_toplevel && !content.trim().is_empty() {
+                    // Check if we have a name to wrap?
+                    if let Some(n) = &item_ident {
+                        // Indent content for auto-wrapping
+                        let indented = content
+                            .lines()
+                            .map(|l| format!("      {}", l))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        format!("components:\n  schemas:\n    {}:\n{}", n, indented)
+                    } else {
+                        content.clone()
+                    }
+                } else {
+                    content.clone()
+                };
+
                 self.items.push(ExtractedItem::Schema {
                     name: item_ident.clone(),
-                    content: body,
+                    content: final_content,
                 });
             }
         }

@@ -1,6 +1,6 @@
 [package]
 name = "openapi-extract"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 authors = ["Viktor Machnik <viktor@machnik.de>"]
 description = "Production-grade OpenAPI generator for Rust. Implements \"Docs-as-Code\" by extracting and deeply merging API specifications directly from source comments (AST) and external files. Zero-runtime overhead."

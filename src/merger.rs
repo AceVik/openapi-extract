@@ -11,9 +11,17 @@ pub fn merge_openapi(fragments: Vec<String>) -> Result<Value> {
     let mut root: Option<Value> = None;
     let mut others: Vec<Value> = Vec::new();
 
-    for fragment in fragments {
-        // serde_yaml::from_str handles both YAML and JSON
-        let value: Value = serde_yaml::from_str(&fragment)?;
+    for (i, fragment) in fragments.iter().enumerate() {
+        let value: Value = match serde_yaml::from_str(fragment) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("\nERROR: Failed to parse snippet #{}:", i + 1);
+                eprintln!("---------------------------------------------------");
+                eprintln!("{}", fragment);
+                eprintln!("---------------------------------------------------");
+                return Err(Error::Yaml(e));
+            }
+        };
 
         if is_root(&value) {
             if root.is_some() {
