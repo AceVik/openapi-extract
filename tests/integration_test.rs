@@ -69,7 +69,31 @@ struct User;
 ///                  $ref: $Wrapper<User>
 ///         '400':
 ///           @insert CommonError("Bad Request")
+///         '401':
+///           @insert CommonError
+///           
+///   /merge-test:
+///     get:
+///       @extend MergeBase
+///       responses:
+///         '200':
+///            description: OK override
 fn main() {{}}
+    "#
+    )
+    .unwrap();
+
+    // 4. Register MergeBase Fragment for testing
+    let merge_rs = src_dir.join("merge.rs");
+    let mut f = File::create(&merge_rs).unwrap();
+    writeln!(
+        f,
+        "{}",
+        r#"
+    //! @openapi-fragment MergeBase
+    //! responses:
+    //!   '404':
+    //!     description: Not Found
     "#
     )
     .unwrap();
@@ -94,4 +118,27 @@ fn main() {{}}
     // components: schemas: Wrapper_User: ... data: $ref: "#/components/schemas/User"
     assert!(merged.contains("Wrapper_User:"));
     assert!(merged.contains("$ref: \"#/components/schemas/User\""));
+
+    // 4. Optional Parens (@insert CommonError)
+    // Should produce "Error {{code}}" -> "Error {{code}}" if no args provided?
+    // Or did we default substitute?
+    // Our fragment expects {{code}}. If no args, it remains {{code}}.
+    // User's fragment: description: Error {{code}}
+    assert!(merged.contains("description: Error {{code}}"));
+
+    // 5. Smart Merge
+    // We expect:
+    // responses:
+    //   '404': ... (From Fragment)
+    //   '200': ... (From User)
+    // And NO duplicate "responses:" key.
+    // The "responses:" from User should have been skipped.
+
+    // Check for double "responses:" lines in that block? Hard to check string.
+    // Check that '404' and '200' effectively exist under one block.
+    // But mainly we check '404' is present.
+    assert!(merged.contains("'404':"));
+    assert!(merged.contains("description: Not Found"));
+    assert!(merged.contains("'200':"));
+    assert!(merged.contains("description: OK override"));
 }

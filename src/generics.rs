@@ -137,6 +137,9 @@ impl<'a> Monomorphizer<'a> {
         let mut depth = 0;
         let chars = args_str.char_indices().peekable();
 
+        if args_str.trim().is_empty() {
+            return Vec::new();
+        }
         for (i, c) in chars {
             match c {
                 '<' => depth += 1,

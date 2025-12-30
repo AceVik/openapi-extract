@@ -146,8 +146,11 @@ impl OpenApiVisitor {
                         content: body,
                     });
                 }
-            } else if header.starts_with("@openapi<") {
+            } else if header.starts_with("@openapi") && header.contains('<') {
                 // Blueprint
+                // Handle optional space: @openapi <T> or @openapi<T>
+                // We use finding '<' as the prompt.
+
                 // Header format: @openapi<T, U>
                 if let Some(start) = header.find('<') {
                     if let Some(end) = header.find('>') {
@@ -167,7 +170,8 @@ impl OpenApiVisitor {
                         }
                     }
                 }
-            } else if header.starts_with("@openapi") || header == "@json" {
+            } else if (header.starts_with("@openapi") && !header.contains('<')) || header == "@json"
+            {
                 // Standard schema
                 self.items.push(ExtractedItem::Schema {
                     name: item_ident.clone(),
