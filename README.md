@@ -1,110 +1,168 @@
 # openapi-extract
 
-[![CI](https://github.com/viktor/openapi-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/viktor/openapi-extract/actions/workflows/ci.yml)
+[![Build Status](https://github.com/AceVik/openapi-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/AceVik/openapi-extract/actions)
 
-`openapi-extract` is a production-grade Rust tool that treats your code as the source of truth for your API documentation. It extracts OpenAPI/Swagger definitions directly from Rust documentation comments (`///`), recursively merges them, and generates a validated `openapi.yaml` or `openapi.json` file.
+A production-grade, zero-runtime overhead OpenAPI generator for Rust. It extracts OpenAPI/Swagger definitions directly from your Rust code's comments (AST) and external files, merges them deeply, and outputs a single, validated `openapi.yaml` or `openapi.json`.
 
 ## Features
 
-- **AST Parsing**: Reliable parsing using `syn`, avoiding regex fragility.
-- **Deep Merging**: Smartly merges partial definitions (e.g., adds paths to the root, appends tags).
-- **Multi-Format**: Supports YAML and JSON input fragments. output format inferred by extension.
-- **Variable Substitution**: Automatically injects `{{CARGO_PKG_VERSION}}` from your environment.
-- **Configuration Layers**: Flexible config via CLI, `openapi.toml`, or `Cargo.toml`.
+- **Mixed Inputs**: Seamlessly merges data from:
+    - **Rust source code** (`.rs`) via AST parsing.
+    - **YAML files** (`.yaml`, `.yml`).
+    - **JSON files** (`.json`).
+- **Smart References**: Use `$ModelName` in your comments to automatically link to `#/components/schemas/ModelName`. No quotes required in YAML!
+- **Deep Merging**: Smarter than simple concatenation. It correctly merges nested paths, tags, and components.
+- **Variable Substitution**: Automatically injects `{{CARGO_PKG_VERSION}}` and other variables.
+- **Strict Validation**: Ensures a valid, single Root definition exists.
+
+---
 
 ## Installation
 
-### From Source
+### Method 1: CLI (Standalone)
+
+Perfect for CI/CD pipelines or manual generation.
 
 ```bash
+cargo install openapi-extract
+# Or from source
 cargo install --path .
 ```
 
-### As a Library (Build Script)
+### Method 2: Library (Build Script)
+
+Ideal for keeping documentation in sync with every build.
 
 Add to `Cargo.toml`:
-
 ```toml
 [build-dependencies]
-openapi-extract = { version = "0.2.0", default-features = false }
+openapi-extract = "0.1.0"
 ```
 
-## Usage
-
-### CLI
-
-```bash
-# Basic usage
-openapi-extract --input ./src --output docs/openapi.yaml
-
-# Multiple inputs and explicit include
-openapi-extract -i ./src -i ./libs/common --include ./legacy/swagger.json -o openapi.json
+Create `build.rs`:
+```rust
+fn main() {
+    // Only rerun if source files change
+    println!("cargo:rerun-if-changed=src");
+    
+    if let Err(e) = openapi_extract::Generator::new()
+        .input("src")
+        .output("docs/openapi.yaml")
+        .generate() {
+        // Log error but don't break build if docs fail (optional)
+        eprintln!("Failed to generate OpenAPI: {}", e);
+    }
+}
 ```
 
-### Configuration Priorities
+---
 
-Settings are loaded in the following order (highest priority first):
+## Configuration
 
-1.  **CLI Arguments**: (`--input`, `--output`)
-2.  **Config File**: (`--config my-config.toml`)
-3.  **Default Config**: (`openapi.toml` in current directory)
-4.  **Cargo Metadata**: (`[package.metadata.openapi-extract]` in `Cargo.toml`)
+Prority Order (Highest to Lowest):
+1. **CLI Arguments** (`--input`, `--output`)
+2. **Config File** (`--config path/to/config.toml`)
+3. **Default Config** (`openapi.toml` in CWD)
+4. **Cargo Metadata** (`[package.metadata.openapi-extract]` in `Cargo.toml`)
 
-#### Example `openapi.toml`
-
+### Example `openapi.toml`
 ```toml
-input = ["src", "crates/api"]
-output = "dist/openapi.yaml"
-include = ["static/base.yaml"]
+input = ["src", "libs/models"]
+include = ["legacy/auth.yaml"]
+output = "public/spec.json"
 ```
 
-#### Example `Cargo.toml`
+---
 
-```toml
-[package.metadata.openapi-extract]
-input = ["src"]
-output = "openapi.yaml"
+## Cookbook & Examples
+
+### 1. Smart References (`$StructName`)
+Stop typing `"$ref": "#/components/schemas/User"`. Just use `$User`.
+
+**Rust Code:**
+```rust
+/// @openapi
+/// components:
+///   schemas:
+///     User:
+///       type: object
+///       properties:
+///         id: { type: integer }
+struct User { id: i32 }
+
+/// @openapi
+/// paths:
+///   /users/me:
+///     get:
+///       responses:
+///         '200':
+///           content:
+///             application/json:
+///               schema:
+///                 $ref: $User  <-- LOOK HERE! No quotes needed.
+fn me() {}
 ```
 
-## Writing Documentation
+**Generated YAML:**
+```yaml
+paths:
+  /users/me:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+```
 
-You can write OpenAPI fragments in YAML (default) or JSON.
+### 2. JSON in Rust Comments
+You can write JSON directly in Rust doc comments. Useful if you have existing JSON schemas.
+**Note**: Multi-line JSON blocks must start with `{`.
 
-### Root Definition (Required Just Once)
+```rust
+/// {
+///   "tags": [
+///     { 
+///       "name": "Billing", 
+///       "description": "Billing endpoints" 
+///     }
+///   ]
+/// }
+pub mod billing {}
+```
+
+### 3. Security Schemes (Auth)
+Define global security schemes in your Root Definition.
 
 ```rust
 /// @openapi
 /// openapi: 3.0.3
 /// info:
-///   title: My Awesome API
+///   title: Secure API
 ///   version: {{CARGO_PKG_VERSION}}
+/// components:
+///   securitySchemes:
+///     BearerAuth:
+///       type: http
+///       scheme: bearer
+///       bearerFormat: JWT
+/// security:
+///   - BearerAuth: []
 struct ApiRoot;
 ```
 
-### Path Fragments
+### 4. Mixed Input (Migration Strategy)
+You can validly mix a legacy `swagger.json` file with new Rust code.
 
-```rust
-/// @openapi
-/// paths:
-///   /users:
-///     get:
-///       summary: List users
-///       tags:
-///         - Users
-fn list_users() {}
+```bash
+openapi-extract \
+  --input ./src \
+  --include ./legacy-api.json \
+  --output ./final-openapi.yaml
 ```
 
-### JSON Style
-
-```rust
-/// {
-///   "tags": [
-///     { "name": "Users", "description": "User management" }
-///   ]
-/// }
-mod users {}
-```
+This allows you to migrate endpoints one by one from the legacy JSON file to Rust comments without breaking the final spec.
 
 ## License
-
 MIT

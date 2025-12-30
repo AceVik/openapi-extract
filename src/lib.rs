@@ -74,6 +74,11 @@ impl Generator {
         let merged_value = merger::merge_openapi(snippets)?;
 
         // 3. Write Output
+        // Ensure parent directory exists
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let file = std::fs::File::create(&output)?;
         let extension = output
             .extension()

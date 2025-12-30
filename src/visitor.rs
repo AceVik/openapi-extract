@@ -1,4 +1,4 @@
-use crate::scanner::substitute_variables;
+use std::collections::HashSet;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, File, ImplItemFn, ItemEnum, ItemFn, ItemMod, ItemStruct};
 
@@ -6,11 +6,15 @@ use syn::{Attribute, Expr, File, ImplItemFn, ItemEnum, ItemFn, ItemMod, ItemStru
 #[derive(Default)]
 pub struct OpenApiVisitor {
     pub snippets: Vec<String>,
+    pub defined_schemas: HashSet<String>,
 }
 
 impl OpenApiVisitor {
-    fn check_attributes(&mut self, attrs: &[Attribute]) {
+    /// Helper to check attributes on an item.
+    /// If `item_ident` is provided, it records it as a defined schema if an OpenAPI comment is found.
+    fn check_attributes(&mut self, attrs: &[Attribute], item_ident: Option<String>) {
         let mut doc_lines = Vec::new();
+
         for attr in attrs {
             if attr.path().is_ident("doc") {
                 if let syn::Meta::NameValue(meta) = &attr.meta {
@@ -50,61 +54,70 @@ impl OpenApiVisitor {
         let full_doc = unindented.join("\n");
         let trimmed = full_doc.trim();
 
+        let mut found_openapi = false;
+
         // Check for @openapi OR JSON start
         if trimmed.starts_with("@openapi") {
             let content = trimmed.strip_prefix("@openapi").unwrap_or("").trim();
             if !content.is_empty() {
-                self.snippets.push(substitute_variables(content));
+                self.snippets.push(content.to_string());
+                found_openapi = true;
             }
         } else if trimmed.starts_with('{') {
-            // Heuristic: if it looks like JSON and is inside a doc comment,
-            // users might expect it to be picked up if they explicitly want to support it
-            // BUT, standard behavior is @openapi.
-            // The prompt said: "Comments containing JSON (detect if block starts with `{`)."
-            // I will support it but only if it parses as valid JSON? No, just extract.
-            // Actually, a block starting with `{` in a doc comment could be code example.
-            // To be safe, I'll strictly follow the prompt but it's risky.
-            // "Extact content only if the comment starts with @openapi" was the V1 rule.
-            // V2 Prompt: "detect if block starts with {"
-            // Ok, I will add it.
-            self.snippets.push(substitute_variables(trimmed));
+            // Heuristic for JSON blocks
+            self.snippets.push(trimmed.to_string());
+            found_openapi = true;
+        }
+
+        // Functionality: Register schema name if we found an OpenAPI block on a struct/enum
+        if found_openapi {
+            if let Some(ident) = item_ident {
+                self.defined_schemas.insert(ident);
+            }
         }
     }
 }
 
 impl<'ast> Visit<'ast> for OpenApiVisitor {
     fn visit_file(&mut self, i: &'ast File) {
-        self.check_attributes(&i.attrs);
+        self.check_attributes(&i.attrs, None);
         visit::visit_file(self, i);
     }
 
     fn visit_item_fn(&mut self, i: &'ast ItemFn) {
-        self.check_attributes(&i.attrs);
+        self.check_attributes(&i.attrs, None); // Functions usually contain paths, not schemas
         visit::visit_item_fn(self, i);
     }
 
     fn visit_item_struct(&mut self, i: &'ast ItemStruct) {
-        self.check_attributes(&i.attrs);
+        let ident = i.ident.to_string();
+        self.check_attributes(&i.attrs, Some(ident));
         visit::visit_item_struct(self, i);
     }
 
     fn visit_item_enum(&mut self, i: &'ast ItemEnum) {
-        self.check_attributes(&i.attrs);
+        let ident = i.ident.to_string();
+        self.check_attributes(&i.attrs, Some(ident));
         visit::visit_item_enum(self, i);
     }
 
     fn visit_item_mod(&mut self, i: &'ast ItemMod) {
-        self.check_attributes(&i.attrs);
+        self.check_attributes(&i.attrs, None);
         visit::visit_item_mod(self, i);
     }
 
     fn visit_impl_item_fn(&mut self, i: &'ast ImplItemFn) {
-        self.check_attributes(&i.attrs);
+        self.check_attributes(&i.attrs, None);
         visit::visit_impl_item_fn(self, i);
     }
 }
 
-pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Vec<String>> {
+pub struct Extracted {
+    pub snippets: Vec<String>,
+    pub schemas: HashSet<String>,
+}
+
+pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Extracted> {
     let content = std::fs::read_to_string(&path)?;
     let parsed_file = syn::parse_file(&content).map_err(|e| crate::error::Error::Parse {
         file: path,
@@ -114,5 +127,8 @@ pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Vec<S
     let mut visitor = OpenApiVisitor::default();
     visitor.visit_file(&parsed_file);
 
-    Ok(visitor.snippets)
+    Ok(Extracted {
+        snippets: visitor.snippets,
+        schemas: visitor.defined_schemas,
+    })
 }
