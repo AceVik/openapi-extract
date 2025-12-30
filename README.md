@@ -1,6 +1,7 @@
 # openapi-extract
 
 [![Build Status](https://github.com/AceVik/openapi-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/AceVik/openapi-extract/actions)
+[![Latest Release](https://img.shields.io/github/v/release/AceVik/openapi-extract)](https://github.com/AceVik/openapi-extract/releases/latest)
 
 A production-grade, zero-runtime overhead OpenAPI generator for Rust. It extracts OpenAPI/Swagger definitions directly from your Rust code's comments (AST) and external files, merges them deeply, and outputs a single, validated `openapi.yaml` or `openapi.json`.
 
@@ -163,6 +164,106 @@ openapi-extract \
 ```
 
 This allows you to migrate endpoints one by one from the legacy JSON file to Rust comments without breaking the final spec.
+
+### 5. Documenting Routes (Handlers) & DTOs
+
+`openapi-extract` doesn't care which web framework you use. You simply document your handler functions and DTO structs.
+
+**DTO (Data Transfer Object):**
+Define the schema directly on the Rust struct.
+```rust
+/// @openapi
+/// components:
+///   schemas:
+///     CreateUserRequest:
+///       type: object
+///       required: [username, email]
+///       properties:
+///         username: { type: string }
+///         email: { type: string, format: email }
+#[derive(Deserialize)]
+struct CreateUserRequest {
+    username: String,
+    email: String,
+}
+```
+
+**Route Handler (Axum/Actix):**
+Define the path operation on the handler function, referencing the DTO with **Smart References**.
+
+```rust
+/// @openapi
+/// paths:
+///   /users:
+///     post:
+///       summary: Create a new user
+///       tags: [Users]
+///       requestBody:
+///         content:
+///           application/json:
+///             schema:
+///               $ref: $CreateUserRequest  <-- Auto-links to struct above!
+///       responses:
+///         '201':
+///           description: User created successfully
+async fn create_user(
+    // Axum example
+    // Json(payload): Json<CreateUserRequest>
+) { 
+    // ... 
+}
+```
+
+### 6. External Schemas (Custom Includes)
+
+If you have large or shared schemas (e.g., `ProblemDetails` or `Auth`) in external files, you can include them easily.
+
+**File Structure:**
+```text
+.
+├── Cargo.toml
+├── openapi.toml
+├── src/
+│   └── main.rs
+└── docs/
+    └── shared_models.yaml
+```
+
+**docs/shared_models.yaml (Pure OpenAPI):**
+```yaml
+components:
+  schemas:
+    ProblemDetails:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+```
+
+**openapi.toml:**
+```toml
+input = ["src"]
+include = ["docs/shared_models.yaml"]  <-- Include external file
+output = "openapi.yaml"
+```
+
+**Usage in Rust:**
+You can now reference the external schema using standard ref (or smart ref if you name matches, though `$` strictly looks for Rust structs). Standard ref is safer for external files:
+
+```rust
+/// @openapi
+/// paths:
+///   /error-example:
+///     get:
+///       responses:
+///         '400':
+///           content:
+///             application/json:
+///               schema:
+///                 $ref: '#/components/schemas/ProblemDetails'
+fn error_route() {}
+```
 
 ## License
 MIT
