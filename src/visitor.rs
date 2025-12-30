@@ -1,17 +1,30 @@
-use std::collections::HashSet;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, File, ImplItemFn, ItemEnum, ItemFn, ItemMod, ItemStruct};
 
-/// Visitor that traverses the Rust AST to find `#[doc]` attributes containing OpenAPI definitions.
+/// Extracted item type
+#[derive(Debug)]
+pub enum ExtractedItem {
+    /// Standard @openapi body
+    Schema {
+        name: Option<String>,
+        content: String,
+    },
+    /// @openapi-fragment Name(args...)
+    Fragment { name: String, content: String },
+    /// @openapi<T, U>
+    Blueprint {
+        name: String,
+        params: Vec<String>,
+        content: String,
+    },
+}
+
 #[derive(Default)]
 pub struct OpenApiVisitor {
-    pub snippets: Vec<String>,
-    pub defined_schemas: HashSet<String>,
+    pub items: Vec<ExtractedItem>,
 }
 
 impl OpenApiVisitor {
-    /// Helper to check attributes on an item.
-    /// If `item_ident` is provided, it records it as a defined schema if an OpenAPI comment is found.
     fn check_attributes(&mut self, attrs: &[Attribute], item_ident: Option<String>) {
         let mut doc_lines = Vec::new();
 
@@ -31,48 +44,115 @@ impl OpenApiVisitor {
             return;
         }
 
-        // Unindent logic: find strictly common indent
-        let min_indent = doc_lines
+        let full_doc = doc_lines.join("\n");
+        // We process the raw block. We need to split by signatures if multiple present.
+        // Or scanner/preprocessor handles it?
+        // "Multi-Definition: A single doc block can contain multiple fragments. The scanner must split the block by the @openapi-fragment keyword."
+
+        self.parse_doc_block(&full_doc, item_ident);
+    }
+
+    fn parse_doc_block(&mut self, doc: &str, item_ident: Option<String>) {
+        let lines: Vec<&str> = doc.lines().collect();
+        // Naive unindent
+        let min_indent = lines
             .iter()
             .filter(|line| !line.trim().is_empty())
             .map(|line| line.chars().take_while(|c| *c == ' ').count())
             .min()
             .unwrap_or(0);
 
-        let unindented: Vec<String> = doc_lines
-            .iter()
-            .map(|line| {
-                if line.len() >= min_indent {
-                    line[min_indent..].to_string()
+        let unindented: Vec<String> = lines
+            .into_iter()
+            .map(|l| {
+                if l.len() >= min_indent {
+                    l[min_indent..].to_string()
                 } else {
-                    line.clone()
+                    l.to_string()
                 }
             })
             .collect();
+        let content = unindented.join("\n");
 
-        // Join lines with newline to reconstruct the block
-        let full_doc = unindented.join("\n");
-        let trimmed = full_doc.trim();
+        // Split by keywords?
+        // We look for logic lines starting with @openapi...
+        // This is complex regex logic.
+        // For v0.2.0 let's handle:
+        // 1. @openapi-fragment Name\nBody
+        // 2. @openapi<T>\nBody
+        // 3. @openapi\nBody
 
-        let mut found_openapi = false;
+        // We can check if the block *starts* with one of these.
+        // If "Multiple fragments per block" is required, we need to split string indices.
 
-        // Check for @openapi OR JSON start
-        if trimmed.starts_with("@openapi") {
-            let content = trimmed.strip_prefix("@openapi").unwrap_or("").trim();
-            if !content.is_empty() {
-                self.snippets.push(content.to_string());
-                found_openapi = true;
+        let mut sections = Vec::new();
+        let mut current_header = String::new();
+        let mut current_body = Vec::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("@openapi") {
+                if !current_header.is_empty() || !current_body.is_empty() {
+                    sections.push((current_header.clone(), current_body.join("\n")));
+                }
+                current_header = trimmed.to_string();
+                current_body.clear();
+            } else if trimmed.starts_with('{') && current_header.is_empty() {
+                // JSON start without header? Treat as unnamed schema extension?
+                // Or treat as part of previous if it exists?
+                // For now, treat as new unnamed section
+                if !current_header.is_empty() || !current_body.is_empty() {
+                    sections.push((current_header.clone(), current_body.join("\n")));
+                }
+                current_header = "@json".to_string();
+                current_body.push(line.to_string());
+            } else {
+                current_body.push(line.to_string());
             }
-        } else if trimmed.starts_with('{') {
-            // Heuristic for JSON blocks
-            self.snippets.push(trimmed.to_string());
-            found_openapi = true;
+        }
+        if !current_header.is_empty() || !current_body.is_empty() {
+            sections.push((current_header, current_body.join("\n")));
         }
 
-        // Functionality: Register schema name if we found an OpenAPI block on a struct/enum
-        if found_openapi {
-            if let Some(ident) = item_ident {
-                self.defined_schemas.insert(ident);
+        for (header, body) in sections {
+            let body = body.trim().to_string();
+            if header.starts_with("@openapi-fragment") {
+                // Parse Name from "@openapi-fragment MyFrag(a,b)"
+                let rest = header.strip_prefix("@openapi-fragment").unwrap().trim();
+                // Simple parse: take until first space or paren?
+                // Name(args)
+                let name = rest.split('(').next().unwrap_or(rest).trim().to_string();
+                self.items.push(ExtractedItem::Fragment {
+                    name,
+                    content: body,
+                });
+            } else if header.starts_with("@openapi<") {
+                // Blueprint
+                // Header format: @openapi<T, U>
+                if let Some(start) = header.find('<') {
+                    if let Some(end) = header.find('>') {
+                        let params_str = &header[start + 1..end];
+                        let params: Vec<String> = params_str
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect();
+
+                        if let Some(ident) = &item_ident {
+                            self.items.push(ExtractedItem::Blueprint {
+                                name: ident.clone(),
+                                params,
+                                content: body,
+                            });
+                        }
+                    }
+                }
+            } else if header.starts_with("@openapi") || header == "@json" {
+                // Standard schema
+                self.items.push(ExtractedItem::Schema {
+                    name: item_ident.clone(),
+                    content: body,
+                });
             }
         }
     }
@@ -85,7 +165,7 @@ impl<'ast> Visit<'ast> for OpenApiVisitor {
     }
 
     fn visit_item_fn(&mut self, i: &'ast ItemFn) {
-        self.check_attributes(&i.attrs, None); // Functions usually contain paths, not schemas
+        self.check_attributes(&i.attrs, None);
         visit::visit_item_fn(self, i);
     }
 
@@ -112,12 +192,7 @@ impl<'ast> Visit<'ast> for OpenApiVisitor {
     }
 }
 
-pub struct Extracted {
-    pub snippets: Vec<String>,
-    pub schemas: HashSet<String>,
-}
-
-pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Extracted> {
+pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Vec<ExtractedItem>> {
     let content = std::fs::read_to_string(&path)?;
     let parsed_file = syn::parse_file(&content).map_err(|e| crate::error::Error::Parse {
         file: path,
@@ -127,8 +202,5 @@ pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Extra
     let mut visitor = OpenApiVisitor::default();
     visitor.visit_file(&parsed_file);
 
-    Ok(Extracted {
-        snippets: visitor.snippets,
-        schemas: visitor.defined_schemas,
-    })
+    Ok(visitor.items)
 }

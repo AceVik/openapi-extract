@@ -1,7 +1,10 @@
 #![allow(clippy::collapsible_if)]
 pub mod config;
 pub mod error;
+pub mod generics;
+pub mod index;
 pub mod merger;
+pub mod preprocessor;
 pub mod scanner;
 pub mod visitor;
 

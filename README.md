@@ -1,268 +1,198 @@
-# openapi-extract
+# openapi-extract v0.2.0
 
 [![Build Status](https://github.com/AceVik/openapi-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/AceVik/openapi-extract/actions)
 [![Latest Release](https://img.shields.io/github/v/release/AceVik/openapi-extract)](https://github.com/AceVik/openapi-extract/releases/latest)
 
-A production-grade, zero-runtime overhead OpenAPI generator for Rust. It extracts OpenAPI/Swagger definitions directly from your Rust code's comments (AST) and external files, merges them deeply, and outputs a single, validated `openapi.yaml` or `openapi.json`.
+A production-grade, zero-runtime overhead OpenAPI generator for Rust. It implements a powerful **Pre-Processor** and **Type System** to enable "Docs-as-Code" with Fragments, Mixins, and Generics.
 
-## Features
+## Features (v0.2.0)
 
-- **Mixed Inputs**: Seamlessly merges data from:
-    - **Rust source code** (`.rs`) via AST parsing.
-    - **YAML files** (`.yaml`, `.yml`).
-    - **JSON files** (`.json`).
-- **Smart References**: Use `$ModelName` in your comments to automatically link to `#/components/schemas/ModelName`. No quotes required in YAML!
-- **Deep Merging**: Smarter than simple concatenation. It correctly merges nested paths, tags, and components.
-- **Variable Substitution**: Automatically injects `{{CARGO_PKG_VERSION}}` and other variables.
-- **Strict Validation**: Ensures a valid, single Root definition exists.
+- **Fragments & Mixins**: Define reusable YAML blocks (`@openapi-fragment`) and inject them (`@insert`, `@extend`).
+- **Generics**: Define schema blueprints (`@openapi<T>`) and instantiate them (`$Page<User>`).
+- **Smart References**: Use `$ModelName` to link to schemas.
+- **Runtime Variables**: Use `$$VAR` for runtime string replacement (e.g. OIDC URLs).
+- **Mixed Inputs**: Merges `.rs` comments, `.yaml`, and `.json` files.
 
 ---
 
-## Installation
+## Installation & Setup
 
-### Method 1: CLI (Standalone)
+### 1. Dependencies (Cargo.toml)
 
-Perfect for CI/CD pipelines or manual generation.
-
-```bash
-cargo install openapi-extract
-# Or from source
-cargo install --path .
-```
-
-### Method 2: Library (Build Script)
-
-Ideal for keeping documentation in sync with every build.
-
-Add to `Cargo.toml`:
 ```toml
 [build-dependencies]
-openapi-extract = "0.1.0"
+openapi-extract = { git = "https://github.com/AceVik/openapi-extract", tag = "v0.2.0" }
 ```
 
-Create `build.rs`:
+### 2. Build Script (`build.rs`) - **REQUIRED**
+
+You **must** use a build script to generate the spec at compile time.
+
 ```rust
+// build.rs
+use openapi_extract::config::Config;
+use openapi_extract::Generator;
+
 fn main() {
-    // Only rerun if source files change
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
     
-    if let Err(e) = openapi_extract::Generator::new()
-        .input("src")
-        .output("docs/openapi.yaml")
-        .generate() {
-        // Log error but don't break build if docs fail (optional)
-        eprintln!("Failed to generate OpenAPI: {}", e);
+    // Load config from openapi.toml or defaults
+    let config = Config::load();
+    
+    if let Err(e) = Generator::new().with_config(config).generate() {
+         eprintln!("Warning: Failed to generate OpenAPI: {}", e);
     }
 }
 ```
 
 ---
 
-## Configuration
+## Feature Guide
 
-Prority Order (Highest to Lowest):
-1. **CLI Arguments** (`--input`, `--output`)
-2. **Config File** (`--config path/to/config.toml`)
-3. **Default Config** (`openapi.toml` in CWD)
-4. **Cargo Metadata** (`[package.metadata.openapi-extract]` in `Cargo.toml`)
+### 1. Fragments & Mixins
 
-### Example `openapi.toml`
-```toml
-input = ["src", "libs/models"]
-include = ["legacy/auth.yaml"]
-output = "public/spec.json"
+Don't repeat yourself. Define fragments for common headers, responses, or error models.
+
+**Definition:**
+```rust
+//! @openapi-fragment CommonHeaders(name)
+//! parameters:
+//!   - in: header
+//!     name: {{arg0}}
+//!     schema: { type: string }
 ```
 
----
+**Usage (Insert):** Injects lines directly.
+```rust
+/// @openapi
+/// paths:
+///   /users:
+///     get:
+///       @insert CommonHeaders("X-Request-ID")
+```
 
-## Cookbook & Examples
-
-### 1. Smart References (`$StructName`)
-Stop typing `"$ref": "#/components/schemas/User"`. Just use `$User`.
-
-**Rust Code:**
+**Usage (Extend):** Merges content (useful for object composition).
 ```rust
 /// @openapi
 /// components:
 ///   schemas:
-///     User:
-///       type: object
-///       properties:
-///         id: { type: integer }
-struct User { id: i32 }
+///     items:
+///       @extend Timestamps
+```
 
+### 2. Generics (Schema Templates)
+
+Define generic blueprints to avoid simple wrapper struct duplication.
+
+**Definition:**
+```rust
+/// @openapi<T>
+/// type: object
+/// properties:
+///   data:
+///     $ref: $T
+///   meta:
+///     $ref: $PaginationMeta
+struct Page<T>(T);
+```
+
+**Usage:**
+```rust
 /// @openapi
 /// paths:
-///   /users/me:
+///   /users:
 ///     get:
 ///       responses:
 ///         '200':
 ///           content:
 ///             application/json:
 ///               schema:
-///                 $ref: $User  <-- LOOK HERE! No quotes needed.
-fn me() {}
+///                 $ref: $Page<User>  <-- Generates Page_User schema
 ```
 
-**Generated YAML:**
-```yaml
-paths:
-  /users/me:
-    get:
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/User"
-```
+---
 
-### 2. JSON in Rust Comments
-You can write JSON directly in Rust doc comments. Useful if you have existing JSON schemas.
-**Note**: Multi-line JSON blocks must start with `{`.
+## Integration Guide (Axum & Swagger UI)
+
+### Servicing with Axum & Swagger UI
+
+Recommended pattern: Serve the spec dynamically and replace placeholders (like Auth URLs) at runtime.
+
+**Implémentation:**
 
 ```rust
-/// {
-///   "tags": [
-///     { 
-///       "name": "Billing", 
-///       "description": "Billing endpoints" 
-///     }
-///   ]
-/// }
-pub mod billing {}
-```
+// src/routes/swagger.rs
+use axum::{
+  http::header,
+  response::{Html, IntoResponse},
+  routing::get,
+  Router,
+};
+use crate::app::AppState; // Adjust import based on user project
+use std::env;
 
-### 3. Security Schemes (Auth)
-Define global security schemes in your Root Definition.
+const OPENAPI_SPEC: &str = include_str!("../../openapi.yaml");
 
-```rust
-/// @openapi
-/// openapi: 3.0.3
-/// info:
-///   title: Secure API
-///   version: {{CARGO_PKG_VERSION}}
-/// components:
-///   securitySchemes:
-///     BearerAuth:
-///       type: http
-///       scheme: bearer
-///       bearerFormat: JWT
-/// security:
-///   - BearerAuth: []
-struct ApiRoot;
-```
+// Define the placeholder used in Cargo.toml / openapi.yaml (if used as var)
+// Or simply $$OIDC_URL in comments
+const OIDC_PLACEHOLDER: &str = "$$OIDC_URL"; 
+const DEFAULT_OIDC_URL: &str = "https://auth.example.com";
 
-### 4. Mixed Input (Migration Strategy)
-You can validly mix a legacy `swagger.json` file with new Rust code.
-
-```bash
-openapi-extract \
-  --input ./src \
-  --include ./legacy-api.json \
-  --output ./final-openapi.yaml
-```
-
-This allows you to migrate endpoints one by one from the legacy JSON file to Rust comments without breaking the final spec.
-
-### 5. Documenting Routes (Handlers) & DTOs
-
-`openapi-extract` doesn't care which web framework you use. You simply document your handler functions and DTO structs.
-
-**DTO (Data Transfer Object):**
-Define the schema directly on the Rust struct.
-```rust
-/// @openapi
-/// components:
-///   schemas:
-///     CreateUserRequest:
-///       type: object
-///       required: [username, email]
-///       properties:
-///         username: { type: string }
-///         email: { type: string, format: email }
-#[derive(Deserialize)]
-struct CreateUserRequest {
-    username: String,
-    email: String,
+pub fn router() -> Router<AppState> {
+  Router::new()
+    .route("/openapi.yaml", get(serve_spec))
+    .route("/swagger", get(serve_ui))
 }
-```
 
-**Route Handler (Axum/Actix):**
-Define the path operation on the handler function, referencing the DTO with **Smart References**.
-
-```rust
 /// @openapi
 /// paths:
-///   /users:
-///     post:
-///       summary: Create a new user
-///       tags: [Users]
-///       requestBody:
-///         content:
-///           application/json:
-///             schema:
-///               $ref: $CreateUserRequest  <-- Auto-links to struct above!
-///       responses:
-///         '201':
-///           description: User created successfully
-async fn create_user(
-    // Axum example
-    // Json(payload): Json<CreateUserRequest>
-) { 
-    // ... 
-}
-```
-
-### 6. External Schemas (Custom Includes)
-
-If you have large or shared schemas (e.g., `ProblemDetails` or `Auth`) in external files, you can include them easily.
-
-**File Structure:**
-```text
-.
-├── Cargo.toml
-├── openapi.toml
-├── src/
-│   └── main.rs
-└── docs/
-    └── shared_models.yaml
-```
-
-**docs/shared_models.yaml (Pure OpenAPI):**
-```yaml
-components:
-  schemas:
-    ProblemDetails:
-      type: object
-      properties:
-        type: { type: string }
-        title: { type: string }
-        status: { type: integer }
-```
-
-**openapi.toml:**
-```toml
-input = ["src"]
-include = ["docs/shared_models.yaml"]  <-- Include external file
-output = "openapi.yaml"
-```
-
-**Usage in Rust:**
-You can now reference the external schema using standard ref (or smart ref if you name matches, though `$` strictly looks for Rust structs). Standard ref is safer for external files:
-
-```rust
-/// @openapi
-/// paths:
-///   /error-example:
+///   /docs/openapi.yaml:
 ///     get:
-///       responses:
-///         '400':
-///           content:
-///             application/json:
-///               schema:
-///                 $ref: '#/components/schemas/ProblemDetails'
-fn error_route() {}
+///       tags: [System]
+///       summary: Get OpenAPI Specification
+///       description: Returns the dynamic OpenAPI 3.1.1 spec.
+async fn serve_spec() -> impl IntoResponse {
+  let oidc_url = env::var("OIDC_URL").unwrap_or_else(|_| DEFAULT_OIDC_URL.to_string());
+  // Runtime replacement of the placeholder
+  let dynamic_spec = OPENAPI_SPEC.replace(OIDC_PLACEHOLDER, &oidc_url);
+
+  (
+    [(header::CONTENT_TYPE, "application/yaml")],
+    dynamic_spec,
+  )
+}
+
+/// @openapi
+/// paths:
+///   /docs/swagger:
+///     get:
+///       summary: Swagger UI
+async fn serve_ui() -> impl IntoResponse {
+  let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Swagger UI</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css" />
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
+    <script>
+        window.onload = () => {
+            window.ui = SwaggerUIBundle({
+                url: '/docs/openapi.yaml',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+                layout: "BaseLayout",
+            });
+        };
+    </script>
+</body>
+</html>"#;
+  Html(html)
+}
 ```
 
 ## License
