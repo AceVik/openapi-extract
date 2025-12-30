@@ -1,0 +1,35 @@
+[package]
+name = "openapi-extract"
+version = "0.1.0"
+edition = "2024"
+authors = ["Viktor Machnik <viktor@machnik.de>"]
+description = "Production-grade OpenAPI generator for Rust. Implements \"Docs-as-Code\" by extracting and deeply merging API specifications directly from source comments (AST) and external files. Zero-runtime overhead."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/AceVik/openapi-extract"
+
+[dependencies]
+# CORE LOGIC
+syn = { version = "2.0", features = ["full", "visit"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1.0"
+walkdir = "2.5"
+thiserror = "2.0"
+toml = "0.9"
+log = "0.4"
+env_logger = "0.11"
+
+# CLI
+clap = { version = "4.5", features = ["derive"], optional = true }
+anyhow = { version = "1.0", optional = true }
+colored = { version = "3.0", optional = true }
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:anyhow", "dep:colored"]
+
+[[bin]]
+name = "openapi-extract"
+path = "src/main.rs"
+required-features = ["cli"]
