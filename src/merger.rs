@@ -7,7 +7,7 @@ pub fn merge_openapi(snippets: Vec<Snippet>) -> Result<Value> {
     let mut root: Option<Value> = None;
     let mut others: Vec<Value> = Vec::new();
 
-    for (_i, snippet) in snippets.iter().enumerate() {
+    for snippet in snippets {
         let value: Value = match serde_yaml::from_str(&snippet.content) {
             Ok(v) => v,
             Err(e) => {
@@ -154,5 +154,30 @@ mod tests {
 
         let res = merge_openapi(vec![s1, s2]);
         assert!(matches!(res, Err(Error::MultipleRootsFound)));
+    }
+
+    #[test]
+    fn test_source_mapped_error() {
+        let bad_yaml = "invalid: : yaml";
+        let snippet = Snippet {
+            content: bad_yaml.to_string(),
+            file_path: std::path::PathBuf::from("bad.yaml"),
+            line_number: 10,
+        };
+        let res = merge_openapi(vec![snippet]);
+        match res {
+            Err(Error::SourceMapped {
+                file,
+                line,
+                context,
+                ..
+            }) => {
+                assert_eq!(file.to_str().unwrap(), "bad.yaml");
+                assert_eq!(line, 10);
+                assert!(context.contains("invalid: : yaml"));
+                assert!(context.contains("10 |")); // Line number in context
+            }
+            _ => panic!("Expected SourceMapped error"),
+        }
     }
 }

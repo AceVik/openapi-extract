@@ -175,11 +175,16 @@ impl OpenApiVisitor {
                         return false;
                     } // skip comments
                     if let Some(key) = trimmed.split(':').next() {
-                        match key.trim() {
-                            "openapi" | "info" | "paths" | "components" | "tags" | "servers"
-                            | "security" => true,
-                            _ => false,
-                        }
+                        matches!(
+                            key.trim(),
+                            "openapi"
+                                | "info"
+                                | "paths"
+                                | "components"
+                                | "tags"
+                                | "servers"
+                                | "security"
+                        )
                     } else {
                         false
                     }
@@ -278,4 +283,47 @@ pub fn extract_from_file(path: std::path::PathBuf) -> crate::error::Result<Vec<E
     visitor.visit_file(&parsed_file);
 
     Ok(visitor.items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enum_auto_extraction() {
+        // We need to simulate parsing an ItemEnum.
+        // Since we don't have 'quote' dep, use parse_str.
+        let code = r#"
+            /// @openapi
+            enum MyEnum {
+                VariantA,
+                VariantB
+            }
+        "#;
+        let item_enum: ItemEnum = syn::parse_str(code).expect("Failed to parse enum");
+
+        let mut visitor = OpenApiVisitor::default();
+        visitor.visit_item_enum(&item_enum);
+
+        assert_eq!(visitor.items.len(), 1);
+        match &visitor.items[0] {
+            ExtractedItem::Schema { name, content, .. } => {
+                assert_eq!(name.as_ref().unwrap(), "MyEnum");
+                // The visitor does both auto-generation AND auto-wrapping.
+                // 1. Visit Enum -> generates "type: string\nenum:..." -> calls check_attributes
+                // 2. check_attributes -> parse_doc_block -> Auto-Wrap Heuristic
+                // 3. Auto-Wrap sees no "components:" key -> Wraps it!
+
+                let expected_wrapped = "components:\n  schemas:\n    MyEnum:";
+                assert!(
+                    content.contains(expected_wrapped),
+                    "Content should be auto-wrapped"
+                );
+                assert!(content.contains("type: string"));
+                assert!(content.contains("- VariantA"));
+                assert!(content.contains("- VariantB"));
+            }
+            _ => panic!("Expected ExtractedItem::Schema"),
+        }
+    }
 }
