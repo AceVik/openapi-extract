@@ -1,12 +1,12 @@
 [package]
-name = "openapi-extract"
-version = "0.3.0"
+name = "oas-forge"
+version = "0.3.1"
 edition = "2024"
 authors = ["Viktor Machnik <viktor@machnik.de>"]
-description = "Production-grade OpenAPI generator for Rust. Implements \"Docs-as-Code\" by extracting and deeply merging API specifications directly from source comments (AST) and external files. Zero-runtime overhead."
+description = "The zero-runtime OpenAPI compiler for Rust. Extracts, links, and merges code-first documentation."
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/AceVik/openapi-extract"
+repository = "https://github.com/AceVik/oas-forge"
 
 [dependencies]
 # CORE LOGIC

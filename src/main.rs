@@ -1,7 +1,7 @@
 #[cfg(feature = "cli")]
 use colored::Colorize;
 #[cfg(feature = "cli")]
-use openapi_extract::{Generator, config::Config};
+use oas_forge::{Generator, config::Config};
 
 #[cfg(feature = "cli")]
 fn main() -> anyhow::Result<()> {
@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| std::path::PathBuf::from("openapi.yaml"));
 
-    println!("{} Starting openapi-extract...", "INFO:".blue().bold());
+    println!("{} Starting oas-forge...", "INFO:".blue().bold());
 
     // Set up Generator
     match Generator::new().with_config(config).generate() {

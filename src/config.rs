@@ -36,8 +36,8 @@ struct CargoPackage {
 
 #[derive(Deserialize)]
 struct CargoMetadata {
-    #[serde(rename = "openapi-extract")]
-    openapi_extract: Option<Config>,
+    #[serde(rename = "oas-forge")]
+    oas_forge: Option<Config>,
 }
 
 impl Config {
@@ -45,7 +45,7 @@ impl Config {
     /// 1. CLI Arguments (Highest)
     /// 2. --config file
     /// 3. openapi.toml
-    /// 4. Cargo.toml [package.metadata.openapi-extract]
+    /// 4. Cargo.toml [package.metadata.oas-forge]
     pub fn load() -> Self {
         let cli_args = Config::parse();
 
@@ -94,7 +94,7 @@ fn load_cargo_toml() -> Result<Config, Box<dyn std::error::Error>> {
     Ok(config
         .package
         .and_then(|p| p.metadata)
-        .and_then(|m| m.openapi_extract)
+        .and_then(|m| m.oas_forge)
         .unwrap_or_default())
 }
 

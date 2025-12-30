@@ -1,66 +1,45 @@
-# openapi-extract
+# oas-forge ⚒️
+> The zero-runtime OpenAPI compiler for Rust.
 
-[![Build Status](https://github.com/AceVik/openapi-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/AceVik/openapi-extract/actions)
+[![Crates.io](https://img.shields.io/crates/v/oas-forge.svg)](https://crates.io/crates/oas-forge)
+[![Documentation](https://docs.rs/oas-forge/badge.svg)](https://docs.rs/oas-forge)
+[![License](https://img.shields.io/crates/l/oas-forge.svg)](https://github.com/AceVik/oas-forge/blob/main/LICENSE)
 
-A production-grade OpenAPI generator for Rust. Extracts, merges, and auto-wraps OpenAPI fragments from code comments.
+**oas-forge** (formerly `openapi-extract`) is a production-grade tool that extracts, merges, and compiles OpenAPI 3.1 specifications directly from your Rust code comments (AST) and external files.
 
-## Features
+## 🚀 Features
+- **Zero Runtime Overhead**: Runs at compile time or in CI/CD.
+- **Source-Mapped Error Reporting**: Precise error messages pointing to file and line.
+- **Auto-Enum Extraction**: Automatically converts Rust Enums to OpenAPI String Enums.
+- **Smart Merging**: Recursively merges partial OpenAPI fragments (YAML/JSON).
 
-- **Auto-Wrapping**: Define a struct's schema directly. The tool automatically places it under `components/schemas/StructName`.
-- **Smart References**: Use `$User` to reference `#/components/schemas/User`.
-- **Macros**:
-  - `@extend Secured("admin")` → `x-openapi-extend` (auto-quoted).
-  - `@insert Pagination` → Injects parameter references.
-- **Mixed Inputs**: Merges `.rs`, `.yaml`, and `.json`.
-- **Source-Mapped Errors**: 🚨 Report precise file and line numbers on YAML errors.
-
-## Installation
-
-```bash
-cargo install --path .
+## 📦 Installation
+```toml
+[dev-dependencies]
+oas-forge = "0.3.1"
 ```
 
-## Usage
-### 1. Automatic Schema Definition (New!)
-No need to write `components: schemas: ...`.
+## 🛠 Usage
 
-**Rust:**
+### Configuration (`Cargo.toml`)
+```toml
+[package.metadata.oas-forge]
+input = ["src", "controllers"]
+output = "openapi.yaml"
+```
+
+### Auto-Enum Extraction
 ```rust
 /// @openapi
-/// type: object
-/// properties:
-///   id: { type: integer }
-struct User { id: i32 }
+enum Role { Admin, User }
 ```
-
-**Generates:**
+Generates:
 ```yaml
 components:
   schemas:
-    User:
-      type: object
-      properties:
-        id: { type: integer }
-```
-
-### 2. Smart References & Generics
-**Rust:**
-```rust
-/// @openapi
-/// paths:
-///   /users:
-///     get:
-///       responses:
-///         '200':
-///           content:
-///             application/json:
-///               schema:
-///                 $ref: $Paginated<User>
-fn list_users() {}
-```
-
-### Configuration (`openapi.toml`)
-```toml
-input = ["src"]
-output = "openapi.yaml"
+    Role:
+      type: string
+      enum:
+        - Admin
+        - User
 ```

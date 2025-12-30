@@ -1,4 +1,4 @@
-use openapi_extract::scanner::scan_directories;
+use oas_forge::scanner::scan_directories;
 use std::fs::File;
 use std::io::Write;
 use tempfile::tempdir;
