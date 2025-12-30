@@ -30,6 +30,14 @@ pub enum Error {
 
     #[error("Empty input: No files found in the specified directories.")]
     NoFilesFound,
+
+    #[error("YAML error in {file}:{line}: {source}\nContext:\n{context}")]
+    SourceMapped {
+        file: PathBuf,
+        line: usize,
+        source: serde_yaml::Error,
+        context: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

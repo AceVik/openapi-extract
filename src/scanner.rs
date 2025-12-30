@@ -22,59 +22,65 @@ pub struct Snippet {
 fn preprocess_macros(snippet: &Snippet, registry: &mut Registry) -> Snippet {
     let content = &snippet.content;
     let mut new_lines = Vec::new();
-    
+
     // Regex definition
     static GENERIC_RE: OnceLock<Regex> = OnceLock::new();
-    let generic_re = GENERIC_RE.get_or_init(|| Regex::new(r"\$([a-zA-Z0-9_]+)<([a-zA-Z0-9_, ]+)>").unwrap());
-    
+    let generic_re =
+        GENERIC_RE.get_or_init(|| Regex::new(r"\$([a-zA-Z0-9_]+)<([a-zA-Z0-9_, ]+)>").unwrap());
+
     static MACRO_INSERT_RE: OnceLock<Regex> = OnceLock::new();
-    let macro_insert_re = MACRO_INSERT_RE.get_or_init(|| Regex::new(r"^(\s*)(-)?\s*@insert\s+([a-zA-Z0-9_]+)$").unwrap());
+    let macro_insert_re = MACRO_INSERT_RE
+        .get_or_init(|| Regex::new(r"^(\s*)(-)?\s*@insert\s+([a-zA-Z0-9_]+)$").unwrap());
 
     static MACRO_EXTEND_RE: OnceLock<Regex> = OnceLock::new();
-    let macro_extend_re = MACRO_EXTEND_RE.get_or_init(|| Regex::new(r"^(\s*)@extend\s+(.+)$").unwrap());
+    let macro_extend_re =
+        MACRO_EXTEND_RE.get_or_init(|| Regex::new(r"^(\s*)@extend\s+(.+)$").unwrap());
 
     for line in content.lines() {
         // 1. Generics Flattening (Inline) + Instantiation
         let mut processed_line = line.to_string();
-        
-        while let Some(caps) = generic_re.captures(&processed_line.clone()) {
-             let full_match = caps.get(0).unwrap().as_str();
-             let name = caps.get(1).unwrap().as_str();
-             let args_raw = caps.get(2).unwrap().as_str();
 
-             // Instantiate via Monomorphizer
-             let mut mono = Monomorphizer::new(registry);
-             let concrete_name = mono.monomorphize(name, args_raw);
-             
-             // Replace with Smart Ref format ($Name)
-             let replacement = format!("${}", concrete_name);
-             processed_line = processed_line.replace(full_match, &replacement);
+        while let Some(caps) = generic_re.captures(&processed_line.clone()) {
+            let full_match = caps.get(0).unwrap().as_str();
+            let name = caps.get(1).unwrap().as_str();
+            let args_raw = caps.get(2).unwrap().as_str();
+
+            // Instantiate via Monomorphizer
+            let mut mono = Monomorphizer::new(registry);
+            let concrete_name = mono.monomorphize(name, args_raw);
+
+            // Replace with Smart Ref format ($Name)
+            let replacement = format!("${}", concrete_name);
+            processed_line = processed_line.replace(full_match, &replacement);
         }
 
         // 2. Short-hand @insert
         if let Some(caps) = macro_insert_re.captures(&processed_line) {
-             let indent = &caps[1];
-             let name = &caps[3];
-             
-             if !registry.fragments.contains_key(name) {
-                 let final_indent = format!("{}- ", indent);
-                 new_lines.push(format!("{}$ref: \"#/components/parameters/{}\"", final_indent, name));
-                 continue;
-             }
+            let indent = &caps[1];
+            let name = &caps[3];
+
+            if !registry.fragments.contains_key(name) {
+                let final_indent = format!("{}- ", indent);
+                new_lines.push(format!(
+                    "{}$ref: \"#/components/parameters/{}\"",
+                    final_indent, name
+                ));
+                continue;
+            }
         }
 
         // 3. Auto-Quoting @extend
         if let Some(caps) = macro_extend_re.captures(&processed_line) {
             let indent = &caps[1];
             let content = &caps[2];
-            let escaped_content = content.replace('\'', "''"); 
+            let escaped_content = content.replace('\'', "''");
             new_lines.push(format!("{}x-openapi-extend: '{}'", indent, escaped_content));
             continue;
         }
 
         new_lines.push(processed_line);
     }
-    
+
     Snippet {
         content: new_lines.join("\n"),
         file_path: snippet.file_path.clone(),
@@ -160,7 +166,11 @@ pub fn scan_directories(roots: &[PathBuf], includes: &[PathBuf]) -> Result<Vec<S
                     let extracted = visitor::extract_from_file(path.clone())?;
                     for item in extracted {
                         match item {
-                            ExtractedItem::Schema { name, content, line } => {
+                            ExtractedItem::Schema {
+                                name,
+                                content,
+                                line,
+                            } => {
                                 if let Some(n) = name {
                                     registry.insert_schema(n, content.clone());
                                 }
@@ -170,10 +180,20 @@ pub fn scan_directories(roots: &[PathBuf], includes: &[PathBuf]) -> Result<Vec<S
                                     line_number: line,
                                 });
                             }
-                            ExtractedItem::Fragment { name, params, content, .. } => {
+                            ExtractedItem::Fragment {
+                                name,
+                                params,
+                                content,
+                                ..
+                            } => {
                                 registry.insert_fragment(name, params, content);
                             }
-                            ExtractedItem::Blueprint { name, params, content, .. } => {
+                            ExtractedItem::Blueprint {
+                                name,
+                                params,
+                                content,
+                                ..
+                            } => {
                                 registry.insert_blueprint(name, params, content);
                             }
                         }
@@ -197,10 +217,10 @@ pub fn scan_directories(roots: &[PathBuf], includes: &[PathBuf]) -> Result<Vec<S
     for snippet in operation_snippets {
         // 2a. Expand Macros
         let macrod_snippet = preprocess_macros(&snippet, &mut registry);
-        
+
         // 2b. Expand Fragments
         let expanded_content = preprocessor::preprocess(&macrod_snippet.content, &registry);
-        
+
         preprocessed_snippets.push(Snippet {
             content: expanded_content,
             file_path: macrod_snippet.file_path,

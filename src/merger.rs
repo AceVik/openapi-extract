@@ -11,18 +11,22 @@ pub fn merge_openapi(snippets: Vec<Snippet>) -> Result<Value> {
         let value: Value = match serde_yaml::from_str(&snippet.content) {
             Ok(v) => v,
             Err(e) => {
-                // Enhanced Error Reporting
-                eprintln!("\n\x1b[31;1mERROR: YAML parsing failed\x1b[0m");
-                eprintln!("  --> {}:{}", snippet.file_path.display(), snippet.line_number);
-                eprintln!("  |");
-                eprintln!("  = Reason: {}", e);
-                eprintln!("  |");
-                eprintln!("  = Snippet Context (first 5 lines):");
-                for (idx, line) in snippet.content.lines().take(5).enumerate() {
-                     eprintln!("    {:02} | {}", idx + snippet.line_number, line);
-                }
-                eprintln!();
-                return Err(Error::Yaml(e));
+                // Construct context string
+                let context: String = snippet
+                    .content
+                    .lines()
+                    .take(5)
+                    .enumerate()
+                    .map(|(idx, line)| format!("    {:02} | {}", idx + snippet.line_number, line))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                return Err(Error::SourceMapped {
+                    file: snippet.file_path.clone(),
+                    line: snippet.line_number,
+                    source: e,
+                    context,
+                });
             }
         };
 
@@ -137,9 +141,17 @@ mod tests {
     fn test_multiple_roots() {
         let root1 = "openapi: 3.0\ninfo: {title: A}";
         let root2 = "openapi: 3.0\ninfo: {title: B}";
-        let s1 = Snippet { content: root1.to_string(), file_path: std::path::PathBuf::from("r1.yaml"), line_number: 1 };
-        let s2 = Snippet { content: root2.to_string(), file_path: std::path::PathBuf::from("r2.yaml"), line_number: 1 };
-        
+        let s1 = Snippet {
+            content: root1.to_string(),
+            file_path: std::path::PathBuf::from("r1.yaml"),
+            line_number: 1,
+        };
+        let s2 = Snippet {
+            content: root2.to_string(),
+            file_path: std::path::PathBuf::from("r2.yaml"),
+            line_number: 1,
+        };
+
         let res = merge_openapi(vec![s1, s2]);
         assert!(matches!(res, Err(Error::MultipleRootsFound)));
     }

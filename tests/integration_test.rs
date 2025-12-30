@@ -110,7 +110,11 @@ fn main() {{}}
 
     // Execute
     let results = scan_directories(&[src_dir], &[]).expect("Scan failed");
-    let merged = results.iter().map(|s| s.content.as_str()).collect::<Vec<_>>().join("\n");
+    let merged = results
+        .iter()
+        .map(|s| s.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
 
     // Assertions
 
