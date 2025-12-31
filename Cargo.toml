@@ -1,6 +1,6 @@
 [package]
 name = "oas-forge"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 authors = ["Viktor Machnik <viktor@machnik.de>"]
 description = "The zero-runtime OpenAPI compiler for Rust. Extracts, links, and merges code-first documentation."

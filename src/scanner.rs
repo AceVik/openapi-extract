@@ -36,49 +36,108 @@ fn preprocess_macros(snippet: &Snippet, registry: &mut Registry) -> Snippet {
     let macro_extend_re =
         MACRO_EXTEND_RE.get_or_init(|| Regex::new(r"^(\s*)@extend\s+(.+)$").unwrap());
 
+    static MACRO_RETURN_RE: OnceLock<Regex> = OnceLock::new();
+    let macro_return_re = MACRO_RETURN_RE.get_or_init(|| {
+        Regex::new(r#"^(\s*)@return\s+(\d{3})\s*:\s*([^\s"]+)(?:\s+"(.*)")?$"#).unwrap()
+    });
+
+    static ARRAY_SHORT_RE: OnceLock<Regex> = OnceLock::new();
+    let array_short_re =
+        ARRAY_SHORT_RE.get_or_init(|| Regex::new(r"\$Vec<([a-zA-Z0-9_]+)>").unwrap());
+
     for line in content.lines() {
-        // 1. Generics Flattening (Inline) + Instantiation
-        let mut processed_line = line.to_string();
+        let mut current_lines = vec![line.to_string()];
 
-        while let Some(caps) = generic_re.captures(&processed_line.clone()) {
-            let full_match = caps.get(0).unwrap().as_str();
-            let name = caps.get(1).unwrap().as_str();
-            let args_raw = caps.get(2).unwrap().as_str();
+        // 0. Expand @return (Route Helper)
+        if let Some(caps) = macro_return_re.captures(line) {
+            let indent = &caps[1];
+            let status = &caps[2];
+            let schema_raw = &caps[3];
+            let desc = caps.get(4).map(|m| m.as_str()).unwrap_or("Success");
 
-            // Instantiate via Monomorphizer
-            let mut mono = Monomorphizer::new(registry);
-            let concrete_name = mono.monomorphize(name, args_raw);
+            // If schema is $Vec<T>, it will be processed in the next step.
+            // If schema is $User, we wrap it in $ref (unless it's already a ref?)
+            // We assume the macro user provides a "Ref-like" string or a "$Vec" string.
+            // We output "$ref: schema_raw" and let further passes resolve "$ref: $User".
+            // However, if schema_raw is `$Vec<T>`, we want the result to be:
+            // schema:
+            //   type: array...
+            // NOT `schema: $ref: { type: array }` -> Invalid.
 
-            // Replace with Smart Ref format ($Name)
-            let replacement = format!("${}", concrete_name);
-            processed_line = processed_line.replace(full_match, &replacement);
+            // Heuristic: If schema starts with `$Vec`, use it directly as the schema value.
+            // Else use `$ref: schema_raw`.
+
+            let schema_line = if schema_raw.starts_with("$Vec") {
+                format!("{0}        {1}", indent, schema_raw) // Direct inject
+            } else {
+                format!("{0}        $ref: {1}", indent, schema_raw) // Ref inject
+            };
+
+            let expanded = format!(
+                "{0}'{1}':\n{0}  description: \"{2}\"\n{0}  content:\n{0}    application/json:\n{0}      schema:\n{3}",
+                indent, status, desc, schema_line
+            );
+            current_lines = expanded.lines().map(|s| s.to_string()).collect();
         }
 
-        // 2. Short-hand @insert
-        if let Some(caps) = macro_insert_re.captures(&processed_line) {
-            let indent = &caps[1];
-            let name = &caps[3];
+        for sub_line in current_lines {
+            let mut processed_line = sub_line.clone();
 
-            if !registry.fragments.contains_key(name) {
-                let final_indent = format!("{}- ", indent);
-                new_lines.push(format!(
-                    "{}$ref: \"#/components/parameters/{}\"",
-                    final_indent, name
-                ));
+            // 1. Array Shorthand ($Vec<T>)
+            // Replace ALL occurrences in the line
+            while let Some(caps) = array_short_re.captures(&processed_line.clone()) {
+                let full_match = caps.get(0).unwrap().as_str();
+                let type_name = caps.get(1).unwrap().as_str();
+                // Inline JSON syntax for array
+                let replacement = format!(
+                    "{{ type: array, items: {{ $ref: \"#/components/schemas/{}\" }} }}",
+                    type_name
+                );
+                processed_line = processed_line.replace(full_match, &replacement);
+            }
+
+            // 2. Generics Flattening (Inline) + Instantiation
+            // (Existing logic)
+            while let Some(caps) = generic_re.captures(&processed_line.clone()) {
+                let full_match = caps.get(0).unwrap().as_str();
+                let name = caps.get(1).unwrap().as_str();
+                let args_raw = caps.get(2).unwrap().as_str();
+
+                // Instantiate via Monomorphizer
+                let mut mono = Monomorphizer::new(registry);
+                let concrete_name = mono.monomorphize(name, args_raw);
+
+                // Replace with Smart Ref format ($Name)
+                let replacement = format!("${}", concrete_name);
+                processed_line = processed_line.replace(full_match, &replacement);
+            }
+
+            // 3. Short-hand @insert
+            if let Some(caps) = macro_insert_re.captures(&processed_line) {
+                let indent = &caps[1];
+                let name = &caps[3];
+
+                if !registry.fragments.contains_key(name) {
+                    let final_indent = format!("{}- ", indent);
+                    new_lines.push(format!(
+                        "{}$ref: \"#/components/parameters/{}\"",
+                        final_indent, name
+                    ));
+                    continue;
+                }
+            }
+
+            // 4. Auto-Quoting @extend
+            if let Some(caps) = macro_extend_re.captures(&processed_line) {
+                let indent = &caps[1];
+                let content = &caps[2];
+                let escaped_content = content.replace('\'', "''");
+                new_lines.push(format!("{}x-openapi-extend: '{}'", indent, escaped_content));
                 continue;
             }
-        }
 
-        // 3. Auto-Quoting @extend
-        if let Some(caps) = macro_extend_re.captures(&processed_line) {
-            let indent = &caps[1];
-            let content = &caps[2];
-            let escaped_content = content.replace('\'', "''");
-            new_lines.push(format!("{}x-openapi-extend: '{}'", indent, escaped_content));
-            continue;
+            new_lines.push(processed_line);
         }
-
-        new_lines.push(processed_line);
     }
 
     Snippet {
@@ -295,5 +354,48 @@ mod tests {
         let input = r"price: \$100";
         let output = finalize_substitution(input);
         assert_eq!(output, "price: $100");
+    }
+
+    #[test]
+    fn test_vec_macro() {
+        let mut registry = Registry::new();
+        let snippet = Snippet {
+            content: "tags: $Vec<Tag>".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+        };
+        let processed = preprocess_macros(&snippet, &mut registry);
+        assert!(processed.content.contains("type: array"));
+        assert!(processed.content.contains("items:"));
+        assert!(processed.content.contains("$ref: \"#/components/schemas/Tag\""));
+    }
+
+    #[test]
+    fn test_return_helper() {
+        let mut registry = Registry::new();
+        let snippet = Snippet {
+            content: "@return 200: $User \"Success\"".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+        };
+        let processed = preprocess_macros(&snippet, &mut registry);
+        assert!(processed.content.contains("'200':"));
+        assert!(processed.content.contains("description: \"Success\""));
+        assert!(processed.content.contains("schema:"));
+        assert!(processed.content.contains("$ref: $User"));
+    }
+
+    #[test]
+    fn test_return_helper_vec() {
+        let mut registry = Registry::new();
+        let snippet = Snippet {
+            content: "@return 400: $Vec<Error>".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+        };
+        let processed = preprocess_macros(&snippet, &mut registry);
+        assert!(processed.content.contains("'400':"));
+        assert!(processed.content.contains("type: array"));
+        assert!(processed.content.contains("$ref: \"#/components/schemas/Error\""));
     }
 }
