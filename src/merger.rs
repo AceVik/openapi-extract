@@ -75,6 +75,18 @@ fn deep_merge(target: &mut Value, source: Value) {
         }
         (Value::Sequence(t_seq), Value::Sequence(s_seq)) => {
             t_seq.extend(s_seq);
+            // Deduplicate preserving order
+            let mut seen = std::collections::HashSet::new();
+            let mut unique = Vec::new();
+            for item in t_seq.drain(..) {
+                // We use the string representation for deduping to handle potential Hash/Eq oddities with YAML Values widely
+                // But serde_yaml::Value does impl Hash/Eq.
+                // However, let's trust serde_yaml's Hash implementation.
+                if seen.insert(item.clone()) {
+                    unique.push(item);
+                }
+            }
+            *t_seq = unique;
         }
         (t, s) => {
             *t = s;
@@ -179,5 +191,42 @@ mod tests {
             }
             _ => panic!("Expected SourceMapped error"),
         }
+    }
+    #[test]
+    fn test_merge_dedup() {
+        // merge_openapi expects root detection (openapi/info).
+        // But deep_merge is private.
+        // We can test merge_openapi with full docs.
+
+        let root_full = r#"
+        openapi: 3.0.0
+        info: {title: T, version: 1}
+        tags: [A, B]
+        "#;
+        let frag_full = r#"
+        tags: [B, C]
+        "#;
+
+        let r_snip = Snippet {
+            content: root_full.to_string(),
+            file_path: std::path::PathBuf::from("r"),
+            line_number: 1,
+        };
+        let f_snip = Snippet {
+            content: frag_full.to_string(),
+            file_path: std::path::PathBuf::from("f"),
+            line_number: 1,
+        };
+
+        let res = merge_openapi(vec![r_snip, f_snip]).unwrap();
+        let yaml = serde_yaml::to_string(&res).unwrap();
+
+        // Should contain A, B, C exactly once (though potentially reordered, B should not appear twice)
+        // YAML output for list: - A\n- B\n- C
+        // Count occurrences
+        let count_b = yaml.matches("B").count();
+        assert_eq!(count_b, 1, "Should deduplicate tag B");
+        assert!(yaml.contains("A"));
+        assert!(yaml.contains("C"));
     }
 }

@@ -367,7 +367,11 @@ mod tests {
         let processed = preprocess_macros(&snippet, &mut registry);
         assert!(processed.content.contains("type: array"));
         assert!(processed.content.contains("items:"));
-        assert!(processed.content.contains("$ref: \"#/components/schemas/Tag\""));
+        assert!(
+            processed
+                .content
+                .contains("$ref: \"#/components/schemas/Tag\"")
+        );
     }
 
     #[test]
@@ -396,6 +400,10 @@ mod tests {
         let processed = preprocess_macros(&snippet, &mut registry);
         assert!(processed.content.contains("'400':"));
         assert!(processed.content.contains("type: array"));
-        assert!(processed.content.contains("$ref: \"#/components/schemas/Error\""));
+        assert!(
+            processed
+                .content
+                .contains("$ref: \"#/components/schemas/Error\"")
+        );
     }
 }
